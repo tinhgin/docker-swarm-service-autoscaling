@@ -1,0 +1,166 @@
+version: "3.3"
+
+secrets:
+  jenkins-user:
+    file: ./jenkins/jenkins-user.scr
+  jenkins-pass:
+    file: ./jenkins/jenkins-pass.scr
+
+configs:
+  prometheus_config:
+    file: ./prometheus/prometheus.yml
+  prometheus_swarm-services-autoscaling:
+    file: ./prometheus/swarm-service-autoscaling.yml
+  alertmanager_config:
+    file: ./alertmanager/alertmanager.yml
+
+volumes:
+  prometheus:
+  alertmanager:
+  jenkins:
+
+
+services:
+  web_resptime_exporter:
+    image: tinhgin/http_https_response_time_exporter
+    environment:
+      - INTERVAL=10
+      - URL=https://yoursite.example.com
+      - PUSHGATEWAY=pushgateway:9091
+      - DOCKERSERVICE=YOUR_WEB_DOCKER_SERVICE_NAME
+    deploy:
+      placement:
+        constraints:
+          - node.role != manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: 128M
+
+  traefik:
+    image: traefik # The official Traefik docker image
+    command: --api --docker --docker.swarmMode --docker.watch # Enables the web UI and tells Traefik to listen to docker
+    ports:
+      - "1192:80"     # The HTTP port
+      #- "1193:8080" # The Web UI (enabled by --api)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # So that Traefik can listen to the Docker events
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          memory: 3G
+        reservations:
+          memory: 64M
+
+  pushgateway:
+    image: prom/pushgateway
+    deploy:
+      labels:
+        traefik.frontend.rule: Host:pushgateway.swarm-service-autoscaling.example.com
+        traefik.port: 9091
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role != manager
+
+
+  prometheus:
+    image: prom/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention=32d'
+    volumes:
+      - prometheus:/prometheus
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+      - source: prometheus_swarm-services-autoscaling
+        target: /etc/prometheus/rules/swarm-services-autoscaling.yml
+    deploy:
+      labels:
+        traefik.frontend.rule: Host:prometheus.swarm-service-autoscaling.example.com
+        traefik.port: 9090
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          memory: 2048M
+        reservations:
+          memory: 128M
+
+
+  alertmanager:
+    image: prom/alertmanager
+    configs:
+      - source: alertmanager_config
+        target: /etc/alertmanager/alertmanager.yml
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - alertmanager:/alertmanager
+    deploy:
+      labels:
+        traefik.frontend.rule: Host:alertmanager.swarm-service-autoscaling.example.com
+        traefik.port: 9093
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role != manager
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+
+
+  jenkins-master:
+    image: vfarcic/jenkins:scale
+    environment:
+      - JENKINS_OPTS="--prefix=/jenkins"
+    volumes:
+      - jenkins:/var/jenkins_home
+    deploy:
+      placement:
+        constraints:
+          - node.role != manager
+      labels:
+        traefik.frontend.rule: Host:jenkins.swarm-service-autoscaling.example.com
+        traefik.port: 8080
+    secrets:
+      - jenkins-user
+      - jenkins-pass
+
+
+
+  jenkins-agent:
+    image: vfarcic/jenkins-swarm-agent
+    environment:
+      - USER_NAME_SECRET=/run/secrets/${JENKINS_USER_SECRET:-jenkins-user}
+      - PASSWORD_SECRET=/run/secrets/${JENKINS_PASS_SECRET:-jenkins-pass}
+      - COMMAND_OPTIONS=-master http://jenkins-master:8080/jenkins -labels 'prod' -executors 4
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    secrets:
+      - jenkins-user
+      - jenkins-pass
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+
+
+
+

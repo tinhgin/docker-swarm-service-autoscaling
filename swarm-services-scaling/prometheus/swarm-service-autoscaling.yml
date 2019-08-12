@@ -1,0 +1,24 @@
+groups:
+- name: swarm_services_scaling
+  rules:
+  - alert: scale_up_http_response_time
+    expr: resp_time > 5000
+    labels:
+      receiver: jenkins
+      scale: up
+      severity: warning
+      service: '{{ $labels.exported_job }}'
+    annotations:
+      summary: "Response time of the service {{ $labels.exported_job }} is above 5000 milliseconds"
+      description: 'value: {{ $value }} miliseconds'
+
+  - alert: scale_down_http_response_time
+    expr: resp_time < 500
+    labels:
+      receiver: jenkins
+      scale: down
+      severity: warning
+      service: '{{ $labels.exported_job }}'
+    annotations:
+      summary: "Response time of the service {{ $labels.exported_job }} is above 5000 milliseconds"
+      description: 'value: {{ $value }} miliseconds'

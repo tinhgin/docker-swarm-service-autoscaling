@@ -1,0 +1,44 @@
+global:
+    resolve_timeout: 60s
+
+route:
+    receiver: 'slack'
+    repeat_interval: 60s
+    group_by: [container_label_com_docker_swarm_task_name, container_label_com_docker_swarm_service_name]
+    routes:
+      - match:
+          scale: 'up'
+          service: 'FPTVN_web'
+        receiver: 'jenkins-up-FPTVN_web'
+      - match:
+          scale: 'down'
+          service: 'FPTVN_web'
+        receiver: 'jenkins-down-FPTVN_web'
+
+receivers:
+  - name: 'slack'
+    slack_configs:
+    - send_resolved: true
+      username: swarm-services-autoscaling
+      channel: swarm-scaling
+      api_url: https://hooks.slack.com/services/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
+      title: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}{{ end }}] {{ range .Alerts }} | {{ .Annotations.summary }} | {{ end }}'
+      title_link: 'http://prometheus.fpt.net/alerts'
+      text: >-
+        {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }} - `{{ .Labels.severity }}`
+          *Description:* {{ .Annotations.description }}
+          *Details:*
+          {{ range .Labels.SortedPairs }} • *{{ .Name }}:* `{{ .Value }}`
+          {{ end }}
+        {{ end }}
+
+  - name: 'jenkins-up-FPTVN_web'
+    webhook_configs:
+      - send_resolved: false
+        url: "http://jenkins-master:8080/jenkins/job/service-scale/buildWithParameters?token=DevOps22&service=FPTVN_web&scale=1"
+
+  - name: 'jenkins-down-FPTVN_web'
+    webhook_configs:
+      - send_resolved: false
+        url: "http://jenkins-master:8080/jenkins/job/service-scale/buildWithParameters?token=DevOps22&service=FPTVN_web&scale=-1"
